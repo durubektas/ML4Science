@@ -1,0 +1,55 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch_geometric.nn import GCNConv
+from torch_geometric.data import Data
+
+class PatchGCN(nn.Module):
+    def __init__(self, in_channels, hidden_channels, out_channels, num_layers=4, dropout=0.5):
+        super(PatchGCN, self).__init__()
+
+        self.layers = nn.ModuleList()
+        self.layers.append(GCNConv(in_channels, hidden_channels))
+
+        for _ in range(num_layers - 2):
+            self.layers.append(GCNConv(hidden_channels, hidden_channels))
+
+        self.layers.append(GCNConv(hidden_channels, out_channels))
+
+        self.dropout = dropout
+        self.attention_pooling = nn.Linear(out_channels, 1)  # Match out_channels
+
+    def forward(self, x, edge_index):
+        for i, conv in enumerate(self.layers):
+            x = conv(x, edge_index)
+            if i < len(self.layers) - 1:
+                x = F.relu(x)
+                x = F.dropout(x, p=self.dropout, training=self.training)
+
+        attention_weights = torch.softmax(self.attention_pooling(x), dim=0)
+        global_feature = torch.sum(attention_weights * x, dim=0, keepdim=True)
+
+        return global_feature, attention_weights
+
+# Graph construction helper function
+def construct_graph(features, adjacency_matrix):
+    edge_index = torch.nonzero(adjacency_matrix, as_tuple=False).T
+    return Data(x=features, edge_index=edge_index)
+
+# Example random made upgraph
+if __name__ == "__main__":
+    # Sample node features and adjacency matrix
+    num_nodes = 10
+    feature_dim = 1024
+
+    features = torch.rand((num_nodes, feature_dim))
+    adjacency_matrix = torch.eye(num_nodes) + torch.rand((num_nodes, num_nodes)) > 0.5
+    adjacency_matrix = adjacency_matrix.int()
+
+    graph_data = construct_graph(features, adjacency_matrix)
+
+    model = PatchGCN(in_channels=feature_dim, hidden_channels=512, out_channels=128, num_layers=4, dropout=0.5)
+
+    global_feature, attention_weights = model(graph_data.x, graph_data.edge_index)
+    print("Global Feature:", global_feature)
+    print("Attention Weights:", attention_weights)
